@@ -1,0 +1,101 @@
+
+services:
+  # ── Core Engine (FastAPI) ──────────────────────────────────────────
+  api:
+    build: ./backend
+    container_name: codesentinel-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://sentinel:sentinelpassword@db:5432/codesentinel
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+    env_file: backend/.env
+    depends_on:
+      - db
+      - redis
+      - qdrant
+    networks:
+      - sentinel-net
+
+  # ── Task Worker (Celery) ───────────────────────────────────────────
+  worker:
+    build: ./backend
+    container_name: codesentinel-worker
+    command: python -m celery -A app.tasks.celery_app:celery_app worker --loglevel=info -Q reviews
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://sentinel:sentinelpassword@db:5432/codesentinel
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+    env_file: backend/.env
+    depends_on:
+      - redis
+      - db
+    networks:
+      - sentinel-net
+
+  # ── Database (PostgreSQL) ──────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: sentinel-db
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinelpassword
+      POSTGRES_DB: codesentinel
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - sentinel-net
+
+  # ── Cache & Broker (Redis) ──────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: sentinel-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - sentinel-net
+
+  # ── Vector Search (Qdrant) ─────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: sentinel-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - sentinel-net
+
+  # ── Observability: Distributed Tracing (Jaeger) ───────────────────
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: sentinel-jaeger
+    ports:
+      - "16686:16686" # UI
+      - "4317:4317"  # OTLP gRPC
+    networks:
+      - sentinel-net
+
+# ── Analytics Dashboard (Next.js) ──────────────────────────────────
+  dashboard:
+    build: ./frontend
+    container_name: codesentinel-dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - api
+    networks:
+      - sentinel-net
+
+networks:
+  sentinel-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  qdrant_data:
